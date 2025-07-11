@@ -34,18 +34,6 @@ const searchQuery = process.argv.length > 2 ? process.argv.slice(2).join(" ") : 
     exec('PowerShell -Command "Add-Type –AssemblyName System.Speech; ' +
          '(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'MedSpa scraping is complete\')"' );
 
-    // 📤 Telegram notification
-    const TELEGRAM_BOT_TOKEN = '7501506717:AAGFrZSIMFd58Ak89xvFPdgjuK_u45fhVZQ'; // replace if needed
-    const TELEGRAM_CHAT_ID = '468575070';
-    const TELEGRAM_MSG = `✅ Scraping completed for:\n🧾 "${searchQuery}"\nCheck your output folder.`;
-
-    await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      params: {
-        chat_id: TELEGRAM_CHAT_ID,
-        text: TELEGRAM_MSG
-      }
-    });
-
     console.log(`✅ All done! Check your output directory for results.`);
     
     // ♻️ Reset power settings
