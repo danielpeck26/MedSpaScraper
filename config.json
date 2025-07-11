@@ -1,0 +1,19 @@
+{
+  "notes": [
+    "all → all keywords in all 50 states",
+    "California → all keywords in California",
+    "Botox Clinic → that keyword in all states",
+    "Med Spa in NYC → a one-off search query"
+  ],
+  "googleMapsScraper": {
+    "defaultSearchQuery": "California"
+  },  
+  "websiteEnricher": {
+    "inputFilename": "outputs/business-data.csv",
+    "outputFilename": "outputs/enriched-business-data.csv",
+    "socialMediaKeywords": {      
+      "facebook": "facebook",      
+      "yelp": "yelp.com"      
+    }
+  }
+}
