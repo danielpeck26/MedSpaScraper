@@ -212,7 +212,10 @@ const enrichBusinesses = async () => {
     });
 
     const groupedByLocation = merged.reduce((acc, item) => {
-      const key = `${item.state}-${item.city}`.substring(0, 31);
+      const state = item.state || 'UnknownState';
+      const city = item.city || 'UnknownCity';
+      const key = `${state}-${city}`.substring(0, 31);
+    
       if (!acc[key]) acc[key] = [];
       acc[key].push(item);
       return acc;

@@ -52,22 +52,51 @@ async function scrapeGoogleMaps(searchQuery) {
     await page.fill('input[name="q"]', query);
     await page.press('input[name="q"]', 'Enter');
     await page.waitForTimeout(5000);
-        try {
+    try {
       await page.click('//h1[text()="Results"]');
     } catch (error) {
       console.warn('⚠️ Could not click results header:', error.message);
     }
     let endOfListReached = false;
     let scrollCount = 0;
-    while (!endOfListReached) {
+    let sameCardCountAttempts = 0;
+    let previousCardCount = 0;
+    const maxSameCountAttempts = 100;
+
+    while (!endOfListReached && sameCardCountAttempts < maxSameCountAttempts && scrollCount < 10000) {
       await page.keyboard.press('ArrowDown');
       await page.waitForTimeout(100);
       scrollCount++;
+
+      // Log progress
       if (scrollCount % 150 === 0) {
-      console.log(`🔄 Still scrolling... didn't reached end of business results list.`);
+        console.log(`🔄 Still scrolling... Didn't reached end of your results`);
       }
-      endOfListReached = await page.$('//span[text()="You\'ve reached the end of the list."]') !== null;
+
+      // Check for "end of list" message
+      const endMessage = await page.$('//span[text()="You\'ve reached the end of the list."]');
+      endOfListReached = endMessage !== null;
+
+      // Fallback 2: check business card count
+      const currentCardCount = await page.$$eval('a[aria-label]', els =>
+        els.reduce((count, el) => el.href.includes('/maps/place') ? count + 1 : count, 0)
+      );
+      if (currentCardCount === previousCardCount) {
+        sameCardCountAttempts++;
+      } else {
+        sameCardCountAttempts = 0;
+        previousCardCount = currentCardCount;
+      }
     }
+
+    if (endOfListReached) {
+      console.log('✅ Reached "end of list" message.');
+    } else if (sameCardCountAttempts >= maxSameCountAttempts) {
+      console.log(`✅ Stopped: business count unchanged in last ${maxSameCountAttempts} scrolls.`);
+    } else if (scrollCount >= 10000) {
+      console.log('🛑 Reached max scroll attempts. Stopping.');
+    }
+
 
     const newUrls = await page.$$eval('a[aria-label]', els =>
       els.map(el => el.href).filter(href => href.includes('/maps/place'))
@@ -150,7 +179,7 @@ async function scrapeGoogleMaps(searchQuery) {
               state = abbreviation && stateAbbrToFull[abbreviation.trim().toUpperCase()] || null;
             }
           }
-          
+
           results.push({ ...details, state });
           // if (results.length % 10 === 0) {
           //   console.log(`[+] Scraped ${results.length} places...`);
