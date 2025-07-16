@@ -37,7 +37,8 @@ async function scrapeGoogleMaps(searchQuery) {
   console.log('\n=== STARTING SCRAPER ===');
   console.log(`🔍 Search Query: "${searchQuery}"`);
 
-  const searchCombos = searchQuery ? [searchQuery] : getSearchCombosFromConfig();
+  //const searchCombos = searchQuery ? [searchQuery] : getSearchCombosFromConfig();
+  const searchCombos = process.argv.length > 2 ? process.argv.slice(2) : getSearchCombosFromConfig();
   let resultUrls = [];
 
   const tempBrowser = await chromium.launch({ headless: false });
@@ -213,8 +214,9 @@ export { scrapeGoogleMaps };
 if (import.meta.url === `file://${process.argv[1]}`) {
   (async () => {
     try {
-      const searchQuery = process.argv.length > 2 ? process.argv.slice(2).join(" ") : "boat rental in Fort Lauderdale";
-      await scrapeGoogleMaps(searchQuery);
+      const searchCombos = process.argv.length > 2 ? process.argv.slice(2) : getSearchCombosFromConfig();
+
+      await scrapeGoogleMaps(searchCombos);
     } catch (err) {
       console.error("❌ Direct execution error:", err);
       process.exit(1);
