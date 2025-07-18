@@ -21,6 +21,27 @@ const getDateString = () => {
 const OUTPUT_XLSX = path.join(__dirname, '..', 'src', 'outputs', `enrichedBusinessLeads_${getDateString()}.xlsx`);
 const BATCH_SIZE = 5;
 
+// ✅ Email sanitization function
+const sanitizeEmail = (raw) => {
+  if (!raw || typeof raw !== 'string') return '';
+  const clean = raw.split('?')[0].trim();
+  const lower = clean.toLowerCase();
+
+  const isValid = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(clean);
+  if (
+    isValid &&
+    !lower.includes('example') &&
+    !lower.startsWith('test') &&
+    !lower.includes('yourmail.com') &&
+    !lower.startsWith('javascript') &&
+    !lower.startsWith('tel:')
+  ) {
+    return clean;
+  }
+
+  return '';
+};
+
 const extractCityState = (address) => {
   if (typeof address !== 'string') return { city: 'Unknown', state: 'Unknown' };
 
@@ -31,13 +52,10 @@ const extractCityState = (address) => {
   let state = 'Unknown';
 
   if (len >= 3) {
-    // Get city from 3rd last part
     const cityParts = parts[len - 3].split(' ');
-    city = cityParts[cityParts.length - 1]; // last word (e.g., "Dothan")
-
-    // Get state from 2nd last part (e.g., "AL 36301")
+    city = cityParts[cityParts.length - 1];
     const stateParts = parts[len - 2].split(' ');
-    state = stateParts[0]; // just "AL"
+    state = stateParts[0];
   }
 
   return { city, state };
@@ -60,9 +78,8 @@ const readCSV = (filePath) => {
               ...data,
               Name: name,
               Website: data.Website || data.website || '',
-              //state: data.state || data.State || 'Unknown'
-              // state,
-              // city
+              //state,
+              city
             });
           }
         }
@@ -94,9 +111,11 @@ const extractLinks = async (page, url, skipBooking = false) => {
       return mailtoLink ? mailtoLink.href.replace('mailto:', '').trim() : '';
     };
 
+    const rawEmail = extractEmail() || match('contact', true) || match('email', true);
+
     return {
       facebook: match('facebook'),
-      email: extractEmail() || match('contact', true) || match('email', true),
+      email: sanitizeEmail(rawEmail),
     };
   } catch (err) {
     return { facebook: '', email: '' };
@@ -145,7 +164,7 @@ const processBatch = async (browser, businesses, startIdx, endIdx, progressBar) 
         const links = await extractLinks(page, site, !!booking);
         return {
           index: i - startIdx,
-          data: { ...business, facebook: links.facebook, email: links.email }
+          data: { ...business, facebook: links.facebook, email: sanitizeEmail(links.email) }
         };
       } catch {
         return {
@@ -165,7 +184,7 @@ const processBatch = async (browser, businesses, startIdx, endIdx, progressBar) 
     const name = result?.data?.Name || 'Unknown';
     if (result && result.data) {
       batchResults[result.index] = result.data;
-      const shortStatus = `✔ Processed ${name}`.substring(0, 50); // limit to 50 chars
+      const shortStatus = `✔ Processed ${name}`.substring(0, 50);
       progressBar.increment({ status: shortStatus });
     } else {
       progressBar.increment({ status: `❌ Failed ${name}` });
@@ -201,58 +220,65 @@ const enrichBusinesses = async () => {
     progressBar.stop();
     await browser.close();
 
+    // 🟦 Get Facebook-only emails where missing
     const facebookRecords = enriched.filter(r => !r.email || r.email.startsWith('http'));
     const facebookResults = await facebookProcessor.processFacebookLinks(facebookRecords);
-    const merged = [...enriched];
 
+    const merged = [...enriched];
     facebookResults.forEach(fb => {
       const existing = merged.find(r => r.Website === fb.Website);
-      if (existing) existing.email = fb.email || existing.email;
-      else merged.push(fb);
+      const cleanFbEmail = sanitizeEmail(fb.email);
+      if (existing && cleanFbEmail) {
+        existing.email = cleanFbEmail;
+      }
     });
 
-    const groupedByLocation = merged.reduce((acc, item) => {
-      const state = item.state || 'UnknownState';
-      const city = item.city || 'UnknownCity';
-      const key = `${state}-${city}`.substring(0, 31);
-    
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(item);
-      return acc;
-    }, {});
+    // const groupedByLocation = merged.reduce((acc, item) => {
+    //   const state = item.state || 'UnknownState';
+    //   const city = item.city || 'UnknownCity';
+    //   const key = `${state}-${city}`.substring(0, 31);
+    //   if (!acc[key]) acc[key] = [];
+    //   acc[key].push(item);
+    //   return acc;
+    // }, {});
 
     const workbook = new ExcelJS.Workbook();
     if (fs.existsSync(OUTPUT_XLSX)) {
       await workbook.xlsx.readFile(OUTPUT_XLSX);
     }
 
-    for (const [state, records] of Object.entries(groupedByLocation)) {
-      const sheet = workbook.addWorksheet(state.substring(0, 31)); // Excel max sheet name length is 31
+    // 🔁 Use timestamp to create unique sheet name
+    const timestamp = new Date().toISOString().replace(/[:T]/g, '-').split('.')[0]; // e.g., "2025-07-16-23-45-12"
+    const sheetName = `Run_${timestamp}`.substring(0, 31); // Excel sheet names max 31 chars
+    const sheet = workbook.addWorksheet(sheetName);
 
-      const seen = new Set();
+    // ✅ Set up headers
+    const seen = new Set();
+    const headers = [
+      ...Object.keys(merged[0])
+        .filter(k => {
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return !['email', 'facebook'].includes(k);
+        })
+        .map(k => ({ header: k, key: k })),
+      { header: 'Email', key: 'email' },
+      { header: 'Facebook', key: 'facebook' }
+    ];
 
-      const headers = [
-        ...Object.keys(records[0])
-          .filter(k => {
-            if (seen.has(k)) return false;
-            seen.add(k);
-            return !['email', 'facebook'].includes(k); // manually add these below
-          })
-          .map(k => ({ header: k, key: k })),
-        { header: 'Email', key: 'email' },
-        { header: 'Facebook', key: 'facebook' }
-      ];
+    sheet.columns = headers;
 
-
-      sheet.columns = headers;
-      sheet.addRows(records.map(row => {
-        if (row.email?.startsWith('http')) row.email = '';
+    // ✅ Add rows with sanitized emails
+    sheet.addRows(
+      merged.map(row => {
+        row.email = sanitizeEmail(row.email);
         return row;
-      }));
-    }
+      })
+    );
 
+    // ✅ Save the file
     await workbook.xlsx.writeFile(OUTPUT_XLSX);
-    console.log(`\n✅ Successfully written to: ${OUTPUT_XLSX}`);
+    console.log(`📄 Data written to ${OUTPUT_XLSX} in sheet "${sheetName}"`);
   } catch (err) {
     console.error('❌ Fatal error:', err.message);
   }
