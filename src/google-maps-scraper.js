@@ -41,7 +41,7 @@ async function scrapeGoogleMaps(searchQuery) {
   const searchCombos = process.argv.length > 2 ? process.argv.slice(2) : getSearchCombosFromConfig();
   let resultUrls = [];
 
-  const tempBrowser = await chromium.launch({ headless: false });
+  const tempBrowser = await chromium.launch({ headless: true });
   const context = await tempBrowser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36',
   });
