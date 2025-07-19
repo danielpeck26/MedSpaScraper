@@ -56,7 +56,14 @@ async function scrapeGoogleMaps(searchQuery) {
     try {
       await page.click('//h1[text()="Results"]');
     } catch (error) {
-      console.warn('⚠️ Could not click results header:', error.message);
+      //console.warn('⚠️ Could not click results header:', error.message);
+      const isSingleBusiness = await page.$('//h1[contains(@class, "DUwDvf")]'); // Business name selector
+
+      if (isSingleBusiness) {
+        console.log("🔹 Only one business found — extracting directly...");
+        const businessUrl = page.url();
+        resultUrls.push(businessUrl);
+      }
     }
     let endOfListReached = false;
     let scrollCount = 0;
