@@ -1,5 +1,11 @@
 import puppeteer from 'puppeteer';
 import cliProgress from 'cli-progress';
+import fs from 'fs';
+
+const DEBUG = false;
+
+const NUM_BROWSERS = 5;
+const TABS_PER_BROWSER = 5;
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -7,7 +13,9 @@ function delay(ms) {
 
 async function extractEmailFromFacebook(url, page) {
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    if (!response || !response.ok()) return null;
+
     await delay(3000 + Math.random() * 2000);
     await page.keyboard.press('Escape');
 
@@ -18,17 +26,17 @@ async function extractEmailFromFacebook(url, page) {
       return emailMatch.find(email => !email.includes('example') && !email.startsWith('test'));
     }
   } catch (err) {
-    process.stderr.write(`\n❌ Error visiting ${url}: ${err.message}\n`);
+    if (DEBUG) {
+      fs.appendFileSync('debug.log', `❌ Error visiting ${url}: ${err.message}\n`);
+    }
+    // Silently skip
   }
   return null;
 }
 
-async function processFacebookLinks(records, batchSize = 5) {
+async function processFacebookLinks(records) {
   const fbRecords = records.filter(r => r.facebook?.trim());
   console.log(`📘 Checking ${fbRecords.length} Facebook URLs for emails...`);
-
-  const browser = await puppeteer.launch({ headless: true });
-  //const context = await browser.createIncognitoBrowserContext();
 
   const progressBar = new cliProgress.SingleBar({
     format: 'Facebook Scrape |{bar}| {percentage}% || {value}/{total} profiles',
@@ -38,26 +46,57 @@ async function processFacebookLinks(records, batchSize = 5) {
   });
   progressBar.start(fbRecords.length, 0);
 
-  for (let i = 0; i < fbRecords.length; i += batchSize) {
-    const batch = fbRecords.slice(i, i + batchSize);
-    const pages = await Promise.all(batch.map(() => browser.newPage()));
+  const chunkSize = NUM_BROWSERS * TABS_PER_BROWSER;
+  for (let i = 0; i < fbRecords.length; i += chunkSize) {
+    const chunk = fbRecords.slice(i, i + chunkSize);
 
-    await Promise.all(batch.map(async (record, idx) => {
-      const page = pages[idx];
-      const email = await extractEmailFromFacebook(record.facebook, page);
-      if (email) {
-        record.email = email;
+    const browsers = await Promise.all(
+      Array.from({ length: NUM_BROWSERS }, () => puppeteer.launch({ headless: true }))
+    );
+
+    const tabGroups = [];
+
+    for (let b = 0; b < NUM_BROWSERS; b++) {
+      const browser = browsers[b];
+      const context = browser;
+
+      const slice = chunk.slice(b * TABS_PER_BROWSER, (b + 1) * TABS_PER_BROWSER);
+      const tabs = await Promise.all(slice.map(() => context.newPage()));
+      tabGroups.push({ context, tabs, records: slice });
+    }
+
+    for (let g = 0; g < tabGroups.length; g++) {
+      const group = tabGroups[g];
+      for (let j = 0; j < group.records.length; j++) {
+        const record = group.records[j];
+        const page = group.tabs[j];
+        if (!record?.facebook?.trim()) {
+          progressBar.increment();
+          await page.close();
+          continue;
+        }
+        try {
+          const email = await extractEmailFromFacebook(record.facebook, page);
+          if (email) {
+            record.email = email.trim();
+          }
+        } catch {
+          // silently skip
+        } finally {
+          progressBar.increment();
+          await page.close();
+        }
       }
-      await page.close();
-      progressBar.increment();
-    }));
+      await group.context.close();
+    }
 
-    await delay(3000 + Math.random() * 2000); // throttle between batches
+    await Promise.all(browsers.map(b => b.close()));
+    await delay(3000 + Math.random() * 2000);
   }
 
   progressBar.stop();
-  await browser.close();
-
+  const finishTime = Date.now();
+  console.log(`✅ Completed Facebook scraping at: ${new Date(finishTime).toLocaleString()}`);
   console.log(`✅ Completed Facebook scraping for ${fbRecords.length} profiles.`);
   return records;
 }

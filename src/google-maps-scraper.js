@@ -49,7 +49,7 @@ async function scrapeGoogleMaps(searchQuery) {
   await page.goto('https://maps.google.com');
 
   for (const query of searchCombos) {
-    console.log(`\n🔎 Searching: "${query}"`);
+    console.log(`\n🔎 Searching: "${query}" [Processing (${searchCombos.indexOf(query) + 1}/${searchCombos.length})]`);
     await page.fill('input[name="q"]', query);
     await page.press('input[name="q"]', 'Enter');
     await page.waitForTimeout(5000);
