@@ -1,19 +1,48 @@
 import { scrapeGoogleMaps } from './src/google-maps-scraper.js';
 import { enrichBusinesses } from './src/website-enricher.js';
 import notifier from 'node-notifier';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
+
 import os from 'os';
+import path from 'path';
 
 const isWindows = process.platform === 'win32';
 const isLinux = process.platform === 'linux';
 
 const searchQuery = process.argv.length > 2 ? process.argv.slice(2).join(" ") : "";
 
+async function cleanupResources() {
+  console.log('🧹 Cleaning up previous resources...');
+
+  if (isWindows) {
+    exec('taskkill /F /IM chromium.exe /T', (err) => {
+      if (err) console.warn('⚠️ Chromium termination failed:', err.message);
+    });
+  } else if (isLinux) {
+    exec('pkill -f chromium', (err) => {
+      if (err) console.warn('⚠️ Chromium kill failed or not running:', err.message);
+    });
+
+    // Optional: Clear memory cache (requires sudo)
+    exec('sync; echo 3 | sudo tee /proc/sys/vm/drop_caches', (err, stdout, stderr) => {
+      if (err) {
+        console.warn('⚠️ Could not drop caches. Try running with sudo.');
+      } else {
+        console.log('🧠 Memory caches dropped');
+      }
+    });
+  }
+
+  // Wait briefly before continuing (in ms)
+  await new Promise(resolve => setTimeout(resolve, 2000));
+}
+
 (async () => {
-  try {
+  try {    
+    await cleanupResources();
     console.log(`🚀 Running scrapeGoogleMaps with Search Query: ${searchQuery}`);
-    
-    // Optional: Prevent sleep (Windows only)
+
+    // Prevent sleep (Windows only)
     if (isWindows) {
       exec('powercfg -change -standby-timeout-ac 0');
     }
@@ -40,9 +69,8 @@ const searchQuery = process.argv.length > 2 ? process.argv.slice(2).join(" ") : 
     // 🔊 Voice Output
     if (isWindows) {
       exec('PowerShell -Command "Add-Type –AssemblyName System.Speech; ' +
-           '(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'MedSpa scraping is complete\')"');
+        '(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'MedSpa scraping is complete\')"');
     } else if (isLinux) {
-      // Use espeak if installed, else fallback to spd-say
       exec(`which espeak >/dev/null 2>&1 && espeak "MedSpa scraping is complete" || spd-say "MedSpa scraping is complete"`);
     }
 

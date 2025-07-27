@@ -37,7 +37,6 @@ async function scrapeGoogleMaps(searchQuery) {
   console.log('\n=== STARTING SCRAPER ===');
   console.log(`🔍 Search Query: "${searchQuery}"`);
 
-  //const searchCombos = searchQuery ? [searchQuery] : getSearchCombosFromConfig();
   const searchCombos = process.argv.length > 2 ? process.argv.slice(2) : getSearchCombosFromConfig();
   let resultUrls = [];
 
@@ -56,15 +55,14 @@ async function scrapeGoogleMaps(searchQuery) {
     try {
       await page.click('//h1[text()="Results"]');
     } catch (error) {
-      //console.warn('⚠️ Could not click results header:', error.message);
-      const isSingleBusiness = await page.$('//h1[contains(@class, "DUwDvf")]'); // Business name selector
-
+      const isSingleBusiness = await page.$('//h1[contains(@class, "DUwDvf")]');
       if (isSingleBusiness) {
         console.log("🔹 Only one business found — extracting directly...");
         const businessUrl = page.url();
         resultUrls.push(businessUrl);
       }
     }
+
     let endOfListReached = false;
     let scrollCount = 0;
     let sameCardCountAttempts = 0;
@@ -72,20 +70,17 @@ async function scrapeGoogleMaps(searchQuery) {
     const maxSameCountAttempts = 100;
 
     while (!endOfListReached && sameCardCountAttempts < maxSameCountAttempts && scrollCount < 10000) {
-      await page.keyboard.press('ArrowDown');
-      await page.waitForTimeout(100);
+      await page.keyboard.press('PageDown');
+      await page.waitForTimeout(50);
       scrollCount++;
 
-      // Log progress
       if (scrollCount % 150 === 0) {
-        console.log(`🔄 Still scrolling... Didn't reached end of your results`);
+        console.log(`🔄 Still scrolling... Didn't reach end of your results`);
       }
 
-      // Check for "end of list" message
       const endMessage = await page.$('//span[text()="You\'ve reached the end of the list."]');
       endOfListReached = endMessage !== null;
 
-      // Fallback 2: check business card count
       const currentCardCount = await page.$$eval('a[aria-label]', els =>
         els.reduce((count, el) => el.href.includes('/maps/place') ? count + 1 : count, 0)
       );
@@ -105,7 +100,6 @@ async function scrapeGoogleMaps(searchQuery) {
       console.log('🛑 Reached max scroll attempts. Stopping.');
     }
 
-
     const newUrls = await page.$$eval('a[aria-label]', els =>
       els.map(el => el.href).filter(href => href.includes('/maps/place'))
     );
@@ -122,6 +116,7 @@ async function scrapeGoogleMaps(searchQuery) {
   const TABS_PER_BROWSER = 5;
   const results = [];
   const chunkedUrls = [];
+
   for (let i = 0; i < resultUrls.length; i += NUM_BROWSERS * TABS_PER_BROWSER) {
     chunkedUrls.push(resultUrls.slice(i, i + NUM_BROWSERS * TABS_PER_BROWSER));
   }
@@ -134,9 +129,15 @@ async function scrapeGoogleMaps(searchQuery) {
   });
   progressBar.start(resultUrls.length, 0);
 
+  // 🔁 Process each chunk one after another (parallel inside each chunk)
   for (let chunkIndex = 0; chunkIndex < chunkedUrls.length; chunkIndex++) {
     const chunk = chunkedUrls[chunkIndex];
-    const browsers = await Promise.all(Array.from({ length: NUM_BROWSERS }, () => chromium.launch({ headless: true })));
+    process.stdout.write(`🧹 Processing chunk ${chunkIndex + 1} of ${chunkedUrls.length}...\r`);
+
+    const browsers = await Promise.all(
+      Array.from({ length: NUM_BROWSERS }, () => chromium.launch({ headless: true }))
+    );
+
     const tabGroups = [];
 
     for (let i = 0; i < NUM_BROWSERS; i++) {
@@ -146,8 +147,7 @@ async function scrapeGoogleMaps(searchQuery) {
       tabGroups.push({ context, tabs, urls: urlsForThisBrowser });
     }
 
-    for (let groupIndex = 0; groupIndex < tabGroups.length; groupIndex++) {
-      const group = tabGroups[groupIndex];
+    await Promise.all(tabGroups.map(async (group) => {
       for (let i = 0; i < group.tabs.length; i++) {
         const tab = group.tabs[i];
         const url = group.urls[i];
@@ -155,14 +155,13 @@ async function scrapeGoogleMaps(searchQuery) {
 
         try {
           await tab.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-          await tab.waitForSelector('h1', { timeout: 8000 });
+          await tab.waitForSelector('h1', { timeout: 10000 });
 
           const details = await tab.evaluate(() => {
             const getText = (selector) => {
               const el = document.querySelector(selector);
               return el ? el.textContent.replace(/^[^\w\d+]+/, '').replace(/\s+/g, ' ').trim() : null;
             };
-
             const getName = () => document.querySelector('h1')?.textContent?.trim() || null;
             const getRating = () => document.evaluate("//div[@class='F7nice ']/span/span", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue?.textContent?.trim() || null;
             const getReview = () => document.evaluate("(//div[@class='F7nice ']/span)[2]/span/span", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue?.textContent?.replace(/[()]/g, '') || null;
@@ -180,18 +179,28 @@ async function scrapeGoogleMaps(searchQuery) {
             };
           });
 
+          const uniqueTargetStates = Array.from(
+            new Set(searchQuery.match(/\b[A-Z]{2}\b/g) || [])
+          ).map(s => s.trim().toUpperCase());
+          // 🔁 Inside your scraping loop
           let state = null;
+
           if (details.address) {
             const abbreviation = getStateFromAddress(details.address);
+
             if (abbreviation) {
-              state = abbreviation && stateAbbrToFull[abbreviation.trim().toUpperCase()] || null;
+              const upperAbbr = abbreviation.trim().toUpperCase();
+              state = upperAbbr;
+
+              // 🛑 Skip if this result doesn't match any target state from keyword
+              if (uniqueTargetStates.length > 0 && !uniqueTargetStates.includes(upperAbbr)) {
+                //console.log(`⚠️ Skipping ${details.name} — ${upperAbbr} not in [${uniqueTargetStates.join(', ')}]: ${details.address}`);
+                return;
+              }
             }
           }
 
           results.push({ ...details, state });
-          // if (results.length % 10 === 0) {
-          //   console.log(`[+] Scraped ${results.length} places...`);
-          // }
         } catch (err) {
           console.warn(`❌ Error scraping ${url}: ${err.message}`);
         } finally {
@@ -199,8 +208,10 @@ async function scrapeGoogleMaps(searchQuery) {
           await tab.close();
         }
       }
+
       await group.context.close();
-    }
+    }));
+
     await Promise.all(browsers.map(b => b.close()));
   }
 
